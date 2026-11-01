@@ -1,0 +1,26 @@
+shell();assert($('#content').innerHTML.includes('ภาพรวมระบบ'),'Dashboard renders');
+for(const name of ['sites','devices','users','issues']){navigate(name);assert($('#content').innerHTML.includes(names[name]),'Page renders '+name);}
+const customDevice={...data.devices[0],id:'render-custom',hostname:'UPS-TEST',type:'other',customType:'UPS <script>alert(1)</script>',antivirusActive:null};
+assert(table([customDevice]).includes('UPS &lt;script&gt;'),'Custom type escaped');
+assert(!table([customDevice]).includes('AV:'),'No Antivirus for custom device');
+assert(!table(data.devices.filter(d=>['nas','router'].includes(d.type))).includes('AV:'),'No Antivirus for NAS/Router');
+assert(table(data.devices.filter(d=>d.type==='server')).includes('AV: Yes'),'Server Antivirus shown');
+const oldPC={...data.devices.find(d=>d.type==='pc'),antivirusActive:null};
+assert(table([oldPC]).includes('AV: ยังไม่ระบุ'),'Unknown Antivirus not rendered as No');
+data={...data,devices:[...data.devices,customDevice],sites:[...data.sites,{id:'BKK2',name:'ทดสอบ <b>สาขา</b>'}]};
+assert(sitesPage().includes('ทดสอบ &lt;b&gt;สาขา&lt;/b&gt;'),'Dynamic site name escaped');
+assert(devicePage().includes('BKK2'),'Dynamic Site in device filter');
+page='devices';siteFilter='HQ';typeFilter='other';query='UPS';results();
+assert($('#device-results').innerHTML.includes('UPS-TEST'),'Custom type searchable and filterable');
+query='does-not-exist';results();assert($('#device-results').innerHTML.includes('ไม่พบอุปกรณ์'),'Empty search');
+page='users';$('#user-search').value='';$('#user-site').value='';
+data.users[0]={...data.users[0],phone:'02-555-0100',notes:'ผู้ใช้ <b>VIP</b>'};userResults();
+assert($('#user-results').innerHTML.includes('02-555-0100')&&$('#user-results').innerHTML.includes('&lt;b&gt;VIP&lt;/b&gt;'),'Phone/notes displayed and escaped');
+const renderIssue={id:'render-issue',occurredOn:'2026-11-01',resolvedOn:'',targetKind:'other',targetId:'',targetName:'VPN <script>',reporterKind:'other',reporterId:'',reporterName:'ผู้แจ้งทดสอบ',notes:'รายละเอียด <img>\nตรวจสอบ'};
+data.issues=[renderIssue];navigate('issues');
+assert($('#issue-results').innerHTML.includes('Open')&&$('#issue-results').innerHTML.includes('VPN &lt;script&gt;'),'Issue state/name rendered safely');
+issueDetails(renderIssue.id);assert($('#editor').innerHTML.includes('&lt;img&gt;'),'Issue detail escaped');
+data.issues[0]={...renderIssue,resolvedOn:'2026-11-02'};issueResults();assert($('#issue-results').innerHTML.includes('Resolved'),'Resolved state rendered');
+issueFilters.status='open';issueResults();assert($('#issue-results').innerHTML.includes('ไม่พบ Issue Logs'),'Issue status filter in rendered list');
+issueFilters.status='';issueFilters.from='2026-11-03';issueFilters.to='2026-11-01';issueResults();assert($('#issue-filter-error').textContent,'Invalid filter date range shows warning');
+const goodData=data;data=undefined;failure='storage error';shell();assert($('#content').innerHTML.includes('storage error'),'Storage error screen works without loaded sites');data=goodData;
