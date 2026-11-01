@@ -86,8 +86,8 @@ save({...initial,devices:[{...pc,type:'nas',site:'AKM'}]});failed=false;try{load
 ''')
             evaluate((ROOT / 'tests/features.js').read_text())
             evaluate('raw=JSON.stringify(initial);')
-            app_code=re.sub(r'\nshell\(\);\s*$', '', code)
-            evaluate('(function(){' + (ROOT / 'tests/render.js').read_text() + app_code + (ROOT / 'tests/render_checks.js').read_text() + '})();')
+            app_code=re.sub(r'\nstart\(\);\s*$', '', code)
+            evaluate('(function(){' + (ROOT / 'tests/render.js').read_text() + app_code + 'data=load();' + (ROOT / 'tests/render_checks.js').read_text() + '})();')
         finally:
             lib.JSGlobalContextRelease(ctx)
 

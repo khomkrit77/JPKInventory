@@ -8,3 +8,9 @@ tests
 scripts
 *.log
 .DS_Store
+*.sqlite*
+*.db
+*.db-*
+backups
+data
+.venv
