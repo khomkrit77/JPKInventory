@@ -135,6 +135,16 @@ Run checks with `python3 -m unittest discover -s tests -v`.
 
 ## Deployment file structure and setup guidelines
 
+Choose the deployment target below, then follow **Required files** and
+**Common setup: Docker Compose**. All three targets run the same application;
+the main differences are storage placement and how users reach the server.
+
+| Target | Required infrastructure | Application access | Persistent data |
+| --- | --- | --- | --- |
+| Public cloud | Linux VM, persistent block disk, DNS and HTTPS proxy/load balancer | Public HTTPS URL; backend reachable only by the proxy/load balancer | Absolute `DATA_DIR` on the persistent disk, with backups stored outside the VM |
+| Local / private cloud | Linux VM, private network and persistent disk | Private DNS/IP through LAN or VPN; optional HTTPS proxy | Absolute `DATA_DIR` on persistent VM storage, with backups outside the VM |
+| Custom server | Physical Linux host or VM; Docker Compose or native Python/Gunicorn | LAN/VPN address or HTTPS reverse proxy | Directory owned by the runtime account, with backups on another system |
+
 ### Required files
 
 Use the same application layout on public cloud VMs, private/local cloud VMs,
@@ -147,6 +157,8 @@ JPKInventory/
 ├── requirements.txt           # Python runtime dependencies
 ├── .env.example               # Configuration template (tracked)
 ├── .env                       # Host-specific configuration (not committed)
+├── .dockerignore              # Exclude secrets and runtime data from image builds
+├── .gitignore                 # Exclude secrets and runtime data from commits
 ├── index.html                 # Generated application entrypoint
 ├── backend/
 │   ├── __init__.py
@@ -173,7 +185,9 @@ JPKInventory/
 ```
 
 For container deployment, retain `Dockerfile`, `docker-compose.yml`,
-`requirements.txt`, `index.html`, `backend/`, and `src/`. Keep `scripts/` when
+`requirements.txt`, `.dockerignore`, `index.html`, `backend/`, and `src/`, and
+provide the host's `.env` alongside `docker-compose.yml`. Keep `.gitignore`
+in source checkouts. Keep `scripts/` when
 building from source and `tests/` when validating a release. `dist/` is optional
 and is not used by the container. Static hosting alone cannot provide login,
 account management or persistent inventory: the Python API must run as well.
@@ -285,6 +299,28 @@ when direct LAN access is intended. Do not use `backend.dev` or
 For native maintenance, use `python3 -m backend.manage check` and
 `python3 -m backend.manage backup /absolute/path/to/new-backup.sqlite3` with the
 same `DATABASE_PATH` environment and service-account permissions.
+
+### Installation acceptance checks
+
+Before handing over a new deployment:
+
+1. Confirm `/api/health` returns HTTP `200` and an unauthenticated `/api/state`
+   returns HTTP `401`, using the actual application URL as well as the backend
+   address where accessible.
+2. Sign in, complete the initial password change, and verify that an individual
+   account has the intended permissions. For HTTPS, confirm that signing in and
+   reloading work with `COOKIE_SECURE=1`.
+3. Create a temporary inventory record, restart the service, then confirm that
+   the record remains. Remove the temporary record after verification.
+4. Run the database integrity check and create a SQLite-aware backup using the
+   commands above. Verify the backup with
+   `docker compose exec -T -e DATABASE_PATH=/data/backups/your-backup.sqlite3 inventory python -m backend.manage check`
+   and copy it to separate storage. For native installs, run the equivalent
+   `DATABASE_PATH=/absolute/path/to/your-backup.sqlite3 python3 -m backend.manage check`.
+   Replace the example path with the existing backup file; expect integrity
+   `ok` and no foreign key errors.
+5. Record the application URL, data directory, service owner, backup location,
+   and restart procedure in private operations documentation.
 
 ### Updates and recovery
 
