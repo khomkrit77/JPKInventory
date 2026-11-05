@@ -160,7 +160,7 @@ class Store:
             db.execute('BEGIN')
             return self._read(db)
 
-    def write(self, raw, revision, merge=False):
+    def write(self, raw, revision, merge=False, allow_delete=True):
         incoming = validate(raw)
         if type(revision) is not int or revision < 0:
             raise ValueError('Invalid revision')
@@ -169,6 +169,11 @@ class Store:
             previous = self._read(db)
             if previous['revision'] != revision:
                 raise Conflict('ข้อมูลบนเซิร์ฟเวอร์เปลี่ยนแล้ว กรุณาคัดลอกข้อมูลในฟอร์ม แล้วโหลดหน้าใหม่ก่อนบันทึก')
+            if not allow_delete and not merge:
+                for key in COLLECTIONS:
+                    ids = {row['id'] for row in incoming[key]}
+                    if any(row['id'] not in ids for row in previous['data'][key]):
+                        raise PermissionError('Only administrators can delete inventory records')
             data = incoming
             if merge:
                 data = copy.deepcopy(previous['data'])

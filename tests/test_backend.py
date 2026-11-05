@@ -23,15 +23,22 @@ class BackendTests(unittest.TestCase):
         self.path = Path(self.tmp.name) / 'inventory.sqlite3'
         self.store = Store(self.path)
         self.app = create_app(self.path)
+        self.cookie = ''
+        self.request('POST', '/api/auth/login', {'username': 'admin', 'password': 'JpkAdmin2026'})
+        self.request('POST', '/api/auth/password', {'currentPassword': 'JpkAdmin2026', 'password': 'ChangedAdmin123'})
+        self.request('POST', '/api/auth/login', {'username': 'admin', 'password': 'ChangedAdmin123'})
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def request(self, method, path, value=None, **headers):
         body = json.dumps(value).encode() if value is not None else b''
-        env = {'REQUEST_METHOD': method, 'PATH_INFO': path, 'HTTP_HOST': 'inventory.test:8084', 'CONTENT_TYPE': 'application/json', 'CONTENT_LENGTH': str(len(body)), 'wsgi.input': io.BytesIO(body), **headers}
+        env = {'REQUEST_METHOD': method, 'PATH_INFO': path, 'HTTP_HOST': 'inventory.test:8084', 'HTTP_COOKIE': self.cookie, 'CONTENT_TYPE': 'application/json', 'CONTENT_LENGTH': str(len(body)), 'wsgi.input': io.BytesIO(body), **headers}
         response = []
         payload = b''.join(self.app(env, lambda status, hdr: response.append((status, hdr))))
+        for key, value in response[0][1]:
+            if key == 'Set-Cookie':
+                self.cookie = value.split(';')[0]
         return int(response[0][0].split()[0]), json.loads(payload)
 
     def test_all_collections_roundtrip_edit_delete_and_reopen(self):

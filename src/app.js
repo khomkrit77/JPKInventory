@@ -6,12 +6,55 @@ const icons={dashboard:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="
 icons.issues='<path d="M14 3H5v18h14V8zM14 3v5h5M8 12h8m-8 4h5"/>';
 const icon=k=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[k]||icons.devices}</svg>`;
 const box=k=>`<span class="icon-box">${icon(k)}</span>`;
-const names={dashboard:'ภาพรวมระบบ',sites:'สำนักงานและสาขา',devices:'รายการอุปกรณ์',users:'ผู้ใช้งาน',issues:'Issue Logs'};
+const names={dashboard:'ภาพรวมระบบ',sites:'สำนักงานและสาขา',devices:'รายการอุปกรณ์',users:'ผู้ใช้งาน',issues:'Issue Logs',accounts:'User Management'};
 let data, failure='',page='dashboard',siteFilter='',typeFilter='',query='',toastTimer;
+
+let currentAccount=null;
+const canWrite=()=>location.protocol==='file:'||currentAccount?.role==='admin'||currentAccount?.permission==='read/write';
+const isAdmin=()=>currentAccount?.role==='admin';
+async function accountRequest(path,method='GET',body) {
+ const response=await fetch('/api/'+path,{method,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+ const result=await response.json();
+ if(!response.ok){const error=Error(result.error||'Request failed');error.status=response.status;throw error;}
+ return result;
+}
+function authScreen(change=false,message='') {
+ $('#app').innerHTML=`<main class="auth-wrap"><form class="panel auth-card" id="auth-form"><h1>JPK Inventory</h1><h2>${change?'Change password':'Sign in'}</h2><p>${change?'Choose a new password before continuing.':'Sign in with your local account.'}</p>${change?'':field('username','Username','','text',true)}${field('password',change?'Current password':'Password','','password',true)}${change?field('newPassword','New password','','password',true)+field('confirmPassword','Confirm new password','','password',true)+'<p class="muted">At least 8 characters, including letters and numbers.</p>':''}<p id="auth-error" role="alert">${esc(message)}</p><button class="primary" type="submit">${change?'Change password':'Sign in'}</button>${change?'<button class="secondary" type="button" id="auth-logout">Sign out</button>':''}</form></main>`;
+ const form=$('#auth-form');form.elements.password.autocomplete='current-password';
+ if(change)form.elements.newPassword.autocomplete='new-password';
+ if($('#auth-logout'))$('#auth-logout').onclick=logout;
+ form.onsubmit=async e=>{e.preventDefault();const b=form.querySelector('[type=submit]');b.disabled=true;
+ try{if(change){if(form.elements.newPassword.value!==form.elements.confirmPassword.value)throw Error('Passwords do not match');await accountRequest('auth/password','POST',{currentPassword:form.elements.password.value,password:form.elements.newPassword.value});currentAccount=null;authScreen(false,'Password changed. Please sign in.');}
+ else{const r=await accountRequest('auth/login','POST',{username:form.elements.username.value,password:form.elements.password.value});currentAccount=r.user;if(currentAccount.mustChange)authScreen(true);else await start();}}
+ catch(err){$('#auth-error').textContent=err.message;}finally{b.disabled=false;}};
+}
+async function logout(){try{await accountRequest('auth/logout','POST',{});currentAccount=null;data=null;page='dashboard';document.querySelectorAll('dialog[open]').forEach(d=>d.close());authScreen();}catch(e){if(e.status===401){currentAccount=null;authScreen();}else toast(e.message,true);}}
+function applyPermissions(){
+ if(location.protocol==='file:')return;
+ const selectors=[];
+ if(!canWrite())selectors.push('#add','[data-edit]','[data-user-edit]','[data-site-edit]','[data-issue-edit]','#detail-edit');
+ if(!isAdmin())selectors.push('[data-delete]','[data-user-delete]','[data-site-delete]','[data-issue-delete]');
+ if(selectors.length)document.querySelectorAll(selectors.join(',')).forEach(b=>b.hidden=true);
+}
+async function accountsPage(){
+ $('#content').innerHTML=heading('User Management','Local login accounts · separate from inventory owners',null)+'<button class="primary" id="create-account">Create user</button><p id="account-message" role="status"></p><section class="panel" id="account-list">Loading…</section>';
+ $('#create-account').onclick=()=>accountForm();
+ try{const r=await accountRequest('accounts');$('#account-list').innerHTML=`<table><thead><tr><th>Username</th><th>Role</th><th>Permission</th><th>Status</th><th>Actions</th></tr></thead><tbody>${r.users.map(u=>`<tr><td>${esc(u.username)}</td><td>${esc(u.role)}</td><td>${u.role==='admin'?'Full administrator access':esc(u.permission)}</td><td>${u.active?'Active':'Disabled'}${u.mustChange?' · Password change required':''}</td><td><button class="action" data-account-edit="${u.id}">Manage</button> <button class="action delete" data-account-delete="${u.id}" ${u.id===currentAccount.id?'disabled':''}>Delete</button></td></tr>`).join('')}</tbody></table>`;
+ document.querySelectorAll('[data-account-edit]').forEach(b=>b.onclick=()=>accountForm(r.users.find(u=>u.id===b.dataset.accountEdit)));
+ document.querySelectorAll('[data-account-delete]').forEach(b=>b.onclick=async()=>{const u=r.users.find(u=>u.id===b.dataset.accountDelete);if(!confirm('Delete login account '+u.username+'?'))return;try{await accountRequest('accounts/'+u.id,'DELETE',{});await accountsPage();}catch(e){$('#account-message').textContent=e.message;}});
+ }catch(e){if(e.status===401){currentAccount=null;authScreen();return;}$('#account-message').textContent=e.message;}
+}
+function accountForm(u){
+ const form=showEditor(u?'Manage '+esc(u.username):'Create login account',`<div class="form-grid">${u?'':field('username','Username','','text',true)}${selectField('role','Role',[['user','User'],['admin','Admin']],u?.role||'user')}${selectField('permission','Permission',[['read-only','read-only'],['read/write','read/write']],u?.permission||'read-only')}${field('password',u?'New password (leave blank to keep)':'Password','','password')}<label class="field"><span><input type="checkbox" name="generatePassword"> Generate temporary password</span></label><label class="field"><span><input type="checkbox" name="mustChange" ${!u||u.mustChange?'checked':''}> Force password change on next login</span></label><label class="field"><span><input type="checkbox" name="active" ${!u||u.active?'checked':''}> Active</span></label></div><p>Passwords require at least 8 characters, including letters and numbers. Generated passwords always require a change. Admins have full access. read/write users can view, create and update; only admins can delete.</p><p id="account-error" role="alert"></p>`);
+ form.elements.password.autocomplete='new-password';
+ form.onsubmit=async e=>{e.preventDefault();const b=form.querySelector('[type=submit]');b.disabled=true;try{const body={role:form.elements.role.value,permission:form.elements.permission.value,active:form.elements.active.checked,mustChange:form.elements.mustChange.checked,generatePassword:form.elements.generatePassword.checked};if(!u)body.username=form.elements.username.value;if(form.elements.password.value)body.password=form.elements.password.value;const r=await accountRequest('accounts'+(u?'/'+u.id:''),u?'PUT':'POST',body);$('#editor').close();if(u?.id===currentAccount.id){currentAccount=null;authScreen(false,'Account updated. Please sign in again.');return;}await accountsPage();if(r.temporaryPassword)$('#account-message').textContent='Temporary password (copy now; shown only once): '+r.temporaryPassword;}
+ catch(err){$('#account-error').textContent=err.message;}finally{b.disabled=false;}};
+}
 
 function toast(message,error=false){const el=$('#toast');el.textContent=message;el.className=`show${error?' error':''}`;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.className='',4500);}
 let saving=false;
 async function commit(next) {
+ if(!canWrite()){toast('Read-only account',true);return false;}
  if(saving)return false;saving=true;
  document.querySelectorAll('button[type="submit"],#yes-delete,#import-data').forEach(b=>b.disabled=true);
  try{data=await save(next);return true;}
@@ -24,8 +67,10 @@ const antivirus=d=>['pc','notebook','server'].includes(d.type)?`<span class="tag
 const siteName=id=>`${id} · ${data.sites.find(s=>s.id===id)?.name||''}`;
 const userName=id=>data.users.find(u=>u.id===id)?.name||'ยังไม่ระบุผู้ใช้';
 function ma(d){if(!['pc','notebook'].includes(d.type))return '<span class="muted">—</span>';if(!d.endMA)return '<span class="tag">ยังไม่ระบุ MA</span>';const today=new Date();const end=new Date(`${d.endMA}T23:59:59`);const days=Math.ceil((end-today)/86400000);return `<span class="tag ${days<0?'expired':days<=30?'warn':'ok'}">${days<0?'หมดอายุ':days<=30?'ใกล้หมดอายุ':'อยู่ในประกัน'}</span>`;}
-function shell(){ $('#app').innerHTML=`<div class="layout"><aside class="sidebar"><div class="brand"><span class="logo">${icon('server')}</span><div>JPK<span style="font-weight:normal"> Inventory</span><small>IT ASSET MANAGEMENT</small></div></div><p class="eyebrow">WORKSPACE</p><nav class="nav" aria-label="เมนูหลัก">${Object.keys(names).map(k=>`<button data-page="${k}" class="${page===k?'active':''}" ${page===k?'aria-current="page"':''}>${icon(k)}<span>${k==='issues'?'Issue Logs':k[0].toUpperCase()+k.slice(1)}</span></button>`).join('')}</nav><nav class="site-nav" aria-label="ดูอุปกรณ์ตาม Site"><p class="eyebrow">YOUR SITES</p>${(data?.sites||sites).map(s=>`<button data-site="${esc(s.id)}"><span class="dot"></span>${esc(s.id)} · ${esc(s.name)}</button>`).join('')}</nav><div class="sidebar-footer"><div class="local-badge"><span class="dot"></span> Shared inventory</div>ข้อมูลบันทึกบนเซิร์ฟเวอร์<br>Version 2.0</div></aside><main class="main"><header class="topbar"><button class="mobile-toggle" aria-label="เปิดหรือปิดเมนู" aria-expanded="false">☰</button><div class="crumb">Workspace <span style="margin:0 12px">/</span> <strong>${names[page]}</strong></div><div class="topright"><button class="secondary" id="data-transfer">นำเข้า / ส่งออกข้อมูล</button><span class="avatar">IT</span></div></header><div class="content" id="content"></div></main></div>`;
+function shell(){ $('#app').innerHTML=`<div class="layout"><aside class="sidebar"><div class="brand"><span class="logo">${icon('server')}</span><div>JPK<span style="font-weight:normal"> Inventory</span><small>IT ASSET MANAGEMENT</small></div></div><p class="eyebrow">WORKSPACE</p><nav class="nav" aria-label="เมนูหลัก">${Object.keys(names).filter(k=>k!=='accounts'||isAdmin()).map(k=>`<button data-page="${k}" class="${page===k?'active':''}" ${page===k?'aria-current="page"':''}>${icon(k)}<span>${k==='accounts'?'User Management':k==='issues'?'Issue Logs':k[0].toUpperCase()+k.slice(1)}</span></button>`).join('')}</nav><nav class="site-nav" aria-label="ดูอุปกรณ์ตาม Site"><p class="eyebrow">YOUR SITES</p>${(data?.sites||sites).map(s=>`<button data-site="${esc(s.id)}"><span class="dot"></span>${esc(s.id)} · ${esc(s.name)}</button>`).join('')}</nav><div class="sidebar-footer"><div class="local-badge"><span class="dot"></span> Shared inventory</div>ข้อมูลบันทึกบนเซิร์ฟเวอร์<br>Version 2.0</div></aside><main class="main"><header class="topbar"><button class="mobile-toggle" aria-label="เปิดหรือปิดเมนู" aria-expanded="false">☰</button><div class="crumb">Workspace <span style="margin:0 12px">/</span> <strong>${names[page]}</strong></div><div class="topright"><button class="secondary" id="data-transfer">นำเข้า / ส่งออกข้อมูล</button>${currentAccount?`<span>${esc(currentAccount.username)}</span><button class="secondary" id="change-password">Password</button><button class="secondary" id="logout">Sign out</button>`:'<span class="avatar">IT</span>'}</div></header><div class="content" id="content"></div></main></div>`;
  $('#data-transfer').onclick=dataTransfer;
+ if($('#logout'))$('#logout').onclick=logout;
+ if($('#change-password'))$('#change-password').onclick=()=>authScreen(true);
  $('.mobile-toggle').onclick=e=>{const open=$('.layout').classList.toggle('menu-open');e.currentTarget.setAttribute('aria-expanded',open);};
  document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>navigate(b.dataset.page));
  document.querySelectorAll('[data-site]').forEach(b=>b.onclick=()=>navigate('devices',b.dataset.site));
@@ -41,7 +86,7 @@ function results(){const q=query.toLocaleLowerCase();const list=data.devices.fil
 function sitesPage(){return heading('สำนักงานและสาขา',`${data.sites.length} สาขา เชื่อมต่อข้อมูลอุปกรณ์ในพื้นที่ของคุณ`,'site')+`<div class="summary-grid">${data.sites.map(s=>`<section class="site-details"><span class="site-code">${esc(s.id)}</span><h2>${esc(s.name)}</h2><p class="muted">${esc(s.detail||'สำนักงานสาขา')}</p>${Object.entries(types).map(([k,v])=>`<div class="breakdown"><span>${v}</span><strong>${data.devices.filter(d=>d.site===s.id&&d.type===k).length}</strong></div>`).join('')}<div class="breakdown"><span>ผู้ใช้งาน</span><strong>${data.users.filter(u=>u.site===s.id).length}</strong></div><button class="primary" data-card-site="${esc(s.id)}">ดูอุปกรณ์ในสาขา ↗</button><div class="actions"><button class="action" data-site-edit="${esc(s.id)}">แก้ไข</button>${s.id!=='HQ'?`<button class="action delete" data-site-delete="${esc(s.id)}">ลบ</button>`:''}</div></section>`).join('')}</div><p class="muted">Server และ NAS กำหนดตำแหน่งอยู่ที่ HQ เท่านั้น · Router, PC และ Notebook ใช้งานได้ทุกสาขา</p>`;}
 function usersPage(){return heading('ผู้ใช้งาน','รายชื่อผู้ใช้งานและผู้รับผิดชอบอุปกรณ์','user')+`<section class="panel"><div class="filters"><input id="user-search" type="search" placeholder="ค้นหาชื่อ แผนก หรือช่องทางติดต่อ…" aria-label="ค้นหาผู้ใช้งาน"><select id="user-site" aria-label="กรอง Site ของผู้ใช้งาน"><option value="">ทุก Site</option>${data.sites.map(s=>`<option value="${esc(s.id)}">${esc(siteName(s.id))}</option>`).join('')}</select></div></section><div class="user-grid" id="user-results"></div>`;}
 function userResults(){const q=$('#user-search').value.toLowerCase(),s=$('#user-site').value;const list=data.users.filter(u=>(!s||u.site===s)&&[u.name,u.department,u.contact,u.phone,u.notes].some(v=>v.toLowerCase().includes(q)));$('#user-results').innerHTML=list.length?list.map(u=>`<article class="user-card"><span class="avatar">${esc(u.name.slice(0,1))}</span><h3>${esc(u.name)}</h3><p class="muted">${esc(u.department)} · ${esc(siteName(u.site))}</p><p class="muted">${esc(u.contact||'ยังไม่ระบุช่องทางติดต่อ')}</p><p class="muted">เบอร์โทรติดต่อ: ${esc(u.phone||'—')}</p><p class="user-notes">${esc(u.notes||'ยังไม่มีหมายเหตุ')}</p><span class="tag">รับผิดชอบ ${data.devices.filter(d=>d.ownerId===u.id).length} อุปกรณ์</span><div class="actions"><button class="action" data-user-edit="${esc(u.id)}">แก้ไข</button><button class="action delete" data-user-delete="${esc(u.id)}">ลบ</button></div></article>`).join(''):'<div class="empty">ไม่พบผู้ใช้งาน</div>';document.querySelectorAll('[data-user-edit]').forEach(b=>b.onclick=()=>userForm(b.dataset.userEdit));document.querySelectorAll('[data-user-delete]').forEach(b=>b.onclick=()=>confirmDelete('user',b.dataset.userDelete));}
-function renderPage(){const c=$('#content');c.innerHTML=({dashboard,devices:devicePage,sites:sitesPage,users:usersPage,issues:issuesPage}[page])()+`<footer><span>JPK Inventory · IT Asset Management</span><span>Shared inventory / v2.0</span></footer>`;if($('#add'))$('#add').onclick=()=>({users:userForm,sites:siteForm,issues:issueForm}[page]||deviceForm)();document.querySelectorAll('[data-card-site]').forEach(b=>b.onclick=()=>navigate('devices',b.dataset.cardSite));if(page==='dashboard'){$('#all-sites').onclick=()=>navigate('sites');$('#all-devices').onclick=()=>navigate('devices');bindDevices();}if(page==='devices'){results();$('#search').oninput=e=>{query=e.target.value;results();};$('#site-filter').onchange=e=>{siteFilter=e.target.value;results();};$('#type-filter').onchange=e=>{typeFilter=e.target.value;results();};}if(page==='sites'){document.querySelectorAll('[data-site-edit]').forEach(b=>b.onclick=()=>siteForm(b.dataset.siteEdit));document.querySelectorAll('[data-site-delete]').forEach(b=>b.onclick=()=>confirmDelete('site',b.dataset.siteDelete));}if(page==='issues')bindIssues();if(page==='users'){userResults();$('#user-search').oninput=userResults;$('#user-site').onchange=userResults;}}
+function renderPage(){if(page==='accounts'){accountsPage();return;}const c=$('#content');c.innerHTML=({dashboard,devices:devicePage,sites:sitesPage,users:usersPage,issues:issuesPage}[page])()+`<footer><span>JPK Inventory · IT Asset Management</span><span>Shared inventory / v2.0</span></footer>`;if($('#add'))$('#add').onclick=()=>({users:userForm,sites:siteForm,issues:issueForm}[page]||deviceForm)();document.querySelectorAll('[data-card-site]').forEach(b=>b.onclick=()=>navigate('devices',b.dataset.cardSite));if(page==='dashboard'){$('#all-sites').onclick=()=>navigate('sites');$('#all-devices').onclick=()=>navigate('devices');bindDevices();}if(page==='devices'){results();$('#search').oninput=e=>{query=e.target.value;results();};$('#site-filter').onchange=e=>{siteFilter=e.target.value;results();};$('#type-filter').onchange=e=>{typeFilter=e.target.value;results();};}if(page==='sites'){document.querySelectorAll('[data-site-edit]').forEach(b=>b.onclick=()=>siteForm(b.dataset.siteEdit));document.querySelectorAll('[data-site-delete]').forEach(b=>b.onclick=()=>confirmDelete('site',b.dataset.siteDelete));}if(page==='issues')bindIssues();if(page==='users'){userResults();$('#user-search').oninput=userResults;$('#user-site').onchange=userResults;}}
 const options=(entries,value)=>entries.map(([k,v])=>`<option value="${esc(k)}" ${k===value?'selected':''}>${esc(v)}</option>`).join('');
 function field(name,label,value='',type='text',required=false){return `<label class="field">${label}${required?' *':''}<input name="${name}" type="${type}" value="${esc(value)}" ${required?'required':''} maxlength="${type==='date'?'10':'300'}"><span class="field-error" data-error="${name}" id="error-${name}"></span></label>`;}
 function selectField(name,label,entries,value){return `<label class="field">${label}<select name="${name}">${options(entries,value)}</select><span class="field-error" data-error="${name}" id="error-${name}"></span></label>`;}
@@ -56,6 +101,7 @@ function deviceForm(id){const original=data.devices.find(d=>d.id===id);const d=o
 }
 function userForm(id){const u=data.users.find(u=>u.id===id)||{name:'',department:'',site:'HQ',contact:'',phone:'',notes:''};const form=showEditor(id?'แก้ไขผู้ใช้งาน':'เพิ่มผู้ใช้งาน',`<div class="form-grid">${field('name','ชื่อ',u.name,'text',true)}${field('department','แผนก',u.department,'text',true)}${selectField('site','Site *',data.sites.map(s=>[s.id,siteName(s.id)]),u.site)}${field('contact','ช่องทางติดต่อ',u.contact)}${field('phone','เบอร์โทรติดต่อ',u.phone,'tel')}<label class="field full">หมายเหตุ<textarea name="notes" rows="3" maxlength="2000">${esc(u.notes)}</textarea></label></div><p class="muted">Owner ของ PC / Notebook สามารถเลือกจากรายชื่อผู้ใช้งานนี้ได้</p>`);form.onsubmit=async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(form));Object.keys(values).forEach(k=>values[k]=values[k].trim());const errors={};if(!values.name)errors.name='กรุณาระบุชื่อ';if(!values.department)errors.department='กรุณาระบุแผนก';if(!data.sites.some(s=>s.id===values.site))errors.site='กรุณาเลือก Site';displayErrors(form,errors);if(Object.keys(errors).length)return;const user={...u,...values,id:id||createId()};if(await commit({...data,users:id?data.users.map(x=>x.id===id?user:x):[...data.users,user]})){$('#editor').close();renderPage();toast('บันทึกข้อมูลผู้ใช้งานสำเร็จ');}};}
 function confirmDelete(kind,id){
+ if(location.protocol!=='file:'&&!isAdmin()){toast('Administrator access required',true);return;}
  if(kind==='site'&&(id==='HQ'||data.users.some(u=>u.site===id)||data.devices.some(d=>d.site===id))){toast('ลบ Site ไม่ได้: HQ หรือยังมีผู้ใช้/อุปกรณ์อ้างถึง กรุณาย้ายรายการก่อน',true);return;}
  const list=kind==='site'?data.sites:kind==='user'?data.users:kind==='issue'?data.issues:data.devices;
  const item=list.find(x=>x.id===id);if(!item)return;
@@ -78,6 +124,7 @@ function showDetails(title,body,edit){
  const form=showEditor(title,body);
  form.onsubmit=e=>e.preventDefault();
  form.querySelector('.dialog-footer').innerHTML=`<button type="button" class="secondary" id="detail-close">ปิด</button><button type="button" class="primary" id="detail-edit">แก้ไข</button>`;
+ applyPermissions();
  $('#detail-close').onclick=()=>$('#editor').close();$('#detail-edit').onclick=()=>{$('#editor').close();edit();};
 }
 const detail=(label,value)=>`<div class="detail-item"><dt>${esc(label)}</dt><dd>${esc(value||'—')}</dd></div>`;
@@ -144,8 +191,9 @@ function dataTransfer() {
  form.querySelector('button[type="submit"]').textContent='นำเข้าข้อมูล';
  $('#export-server').onclick=()=>downloadData(data,'jpkinventory-export.json');
  $('#export-legacy').onclick=()=>{try{const old=legacyData();if(!old)throw Error('ไม่พบข้อมูลเดิมที่ origin นี้');downloadData(old,'jpkinventory-localstorage.json');}catch(e){$('#transfer-result').textContent=e.message;}};
+ if(!canWrite()){form.querySelector('button[type="submit"]').hidden=true;$('#import-file').disabled=true;}
  form.onsubmit=async e=>{
-  e.preventDefault();if(saving)return;
+  e.preventDefault();if(saving||!canWrite())return;
   try{
    const file=$('#import-file').files[0];if(!file)throw Error('กรุณาเลือกไฟล์ JSON');if(file.size>8*1024*1024)throw Error('ไฟล์ต้องไม่เกิน 8 MiB');
    const incoming=JSON.parse(await file.text());downloadData(data,'jpkinventory-before-import.json');
@@ -156,8 +204,11 @@ function dataTransfer() {
  };
 }
 async function start() {
+ if(location.protocol!=='file:'){try{currentAccount=(await accountRequest('auth/me')).user;}catch(e){authScreen(false,e.message==='Please sign in'?'':e.message);return;}if(currentAccount.mustChange){authScreen(true);return;}}
  try{await initializeStorage();data=load();failure='';}
  catch(e){failure='โหลดข้อมูลไม่สำเร็จ: '+e.message+' กรุณาโหลดหน้าใหม่ ข้อมูลเดิมจะไม่ถูกเขียนทับ';}
  shell();
 }
+const permissionObserver=new MutationObserver(()=>applyPermissions());
+permissionObserver.observe($('#app'),{childList:true,subtree:true});
 start();

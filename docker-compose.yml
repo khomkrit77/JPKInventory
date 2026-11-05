@@ -6,6 +6,8 @@ services:
       - "${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8084}:8080"
     environment:
       DATABASE_PATH: /data/inventory.sqlite3
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-JpkAdmin2026}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
     volumes:
       - type: bind
         source: ${DATA_DIR:-/home/superuser/jpkinventory-data}

@@ -35,4 +35,13 @@ See README for online backup, restore with app stopped, and browser localStorage
 
 Network limitation: the server itself serves HTTP on port 8084. Testing `http://27.254.185.87:8084` from the client returned an `SSH-2.0-OpenSSH_8.9p1` banner, not HTTP. Direct access to LAN `192.168.11.100:8084` from the test client timed out. Public access needs the correct public IP/domain and a verified TCP 8084 route/NAT to `192.168.11.100:8084`. Do not replace a live SSH mapping without another confirmed management path. `ufw status` requires sudo authentication unavailable to this session; no firewall or NAT rules were changed.
 
-Test URLs: server-local `http://127.0.0.1:8084`; LAN `http://192.168.11.100:8084` when network routing allows. Public URL remains unverified pending network clarification. There is no login/role system; network access to the inventory must be limited appropriately for the data in use.
+Test URLs: server-local `http://127.0.0.1:8084`; LAN `http://192.168.11.100:8084` when network routing allows. Public URL remains unverified pending network clarification. The authentication update below adds local login accounts and API permission checks.
+
+### Authentication update
+
+Rebuild/restart the service to apply the login and user-management changes:
+`docker compose up -d --build`. The existing SQLite database gets separate account
+and session tables automatically; inventory data is preserved. Sign in as `admin`
+using `ADMIN_PASSWORD` (default `JpkAdmin2026`) and change the password when prompted.
+This setting seeds only the initial account and does not reset existing passwords.
+For HTTPS deployments, set `COOKIE_SECURE=1` in `.env` before recreating the service.
